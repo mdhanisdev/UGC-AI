@@ -38,6 +38,7 @@ model Project {
   uploadedImages     String[]
   generatedImage     String   @default("")
   generatedVideo     String   @default("")
+  variant            String   @default("1")
   isGenerating       Boolean  @default(false)
   isPublished        Boolean  @default(false)
   error              String   @default("")

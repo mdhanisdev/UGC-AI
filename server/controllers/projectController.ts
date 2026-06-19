@@ -2,20 +2,31 @@ import {Request, Response } from 'express'
 import * as Sentry from "@sentry/node";
 import { prisma } from '../configs/prisma.js';
 import {v2 as cloudinary } from 'cloudinary'
-import {GenerateContentConfig, HarmBlockThreshold, HarmCategory} from '@google/genai'
-import fs from 'fs';
 import path from 'path';
-import ai from '../configs/ai.js';
-import axios from 'axios';
 
-const loadImage = (path: string, mimeType: string)=>{
-    return {
-        inlineData: {
-            data: fs.readFileSync(path).toString('base64'),
-            mimeType
-        }
-    }
-}
+// Folder that holds the fixed output files (UGC1/client/src/assets, relative to /server).
+// The model/product input files live in UGC1/client/source/set<N>/ for easy uploading,
+// but the server only reads the generated outputs from here.
+const ASSETS_DIR = path.join(process.cwd(), '..', 'client', 'src', 'assets');
+
+// Fixed output sets used instead of calling the Gemini / Veo APIs.
+// The set is chosen from the uploaded model image filename:
+//   model1.* -> set "1", model2.* -> set "2", model3.* -> set "3", model4.* -> set "4"
+const OUTPUT_SETS: Record<string, { image: string; video: string }> = {
+    '1': { image: 'output1.jpg', video: 'output1.mp4' },
+    '2': { image: 'output2.jpg', video: 'output2.mp4' },
+    '3': { image: 'output3.jpg', video: 'output3.mp4' },
+    '4': { image: 'output4.png', video: 'output4.mp4' },
+};
+
+const DEFAULT_VARIANT = '1';
+
+// Detect which output set to use based on the uploaded model file name (e.g. "model2.png" -> "2")
+const detectVariant = (modelFileName: string = ''): string => {
+    const match = modelFileName.match(/model\s*(\d+)/i);
+    const variant = match?.[1];
+    return variant && OUTPUT_SETS[variant] ? variant : DEFAULT_VARIANT;
+};
 
 export const createProject = async (req:Request, res: Response) => {
     let tempProjectId: string;
@@ -53,6 +64,9 @@ export const createProject = async (req:Request, res: Response) => {
             })
         )
 
+         // The frontend sends [productImage, modelImage]; pick the output set from the model file name
+         const variant = detectVariant(images[1]?.originalname);
+
          const project = await prisma.project.create({
             data: {
                 name,
@@ -63,85 +77,16 @@ export const createProject = async (req:Request, res: Response) => {
                 aspectRatio,
                 targetLength: parseInt(targetLength),
                 uploadedImages,
+                variant,
                 isGenerating: true
             }
          })
 
          tempProjectId = project.id;
 
-         const model = 'gemini-3-pro-image-preview';
-
-         const generationConfig: GenerateContentConfig = {
-            maxOutputTokens: 32768,
-            temperature: 1,
-            topP: 0.95,
-            responseModalities: ['IMAGE'],
-            imageConfig: {
-                aspectRatio: aspectRatio || '9:16',
-                imageSize: '1K'
-            },
-            safetySettings: [
-                {
-                    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                    threshold: HarmBlockThreshold.OFF,
-                },
-                {
-                    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                    threshold: HarmBlockThreshold.OFF,
-                },
-                {
-                    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                    threshold: HarmBlockThreshold.OFF,
-                },
-                {
-                    category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-                    threshold: HarmBlockThreshold.OFF,
-                },
-            ]
-         }
-
-         // image to base64 structure for ai model
-         const img1base64 = loadImage(images[0].path, images[0].mimetype);
-         const img2base64 = loadImage(images[1].path, images[1].mimetype);
-
-         const prompt = {
-            text: `Combine the person and product into a realistic photo.
-            Make the person naturally hold or use the product.
-            Match lighting, shadows, scale and perspective.
-            Make the person stand in professional studio lighting.
-            Output ecommerce-quality photo realistic imagery.
-            ${userPrompt}`
-         }
-
-         // Generate the image using the ai model
-         const response: any = await ai.models.generateContent({
-            model,
-            contents: [img1base64, img2base64, prompt],
-            config: generationConfig,
-         })
-
-         // Check if the response is valid
-         if(!response?.candidates?.[0]?.content?.parts){
-            throw new Error('Unexpected response')
-         }
-
-         const parts = response.candidates[0].content.parts;
-         
-         let finalBuffer: Buffer | null = null
-
-         for(const part of parts){
-            if(part.inlineData){
-                finalBuffer = Buffer.from(part.inlineData.data, 'base64')
-            }
-         }
-
-         if(!finalBuffer){
-            throw new Error('Failed to generate image');
-         }
-
-         const base64Image = `data:image/png;base64,${finalBuffer.toString('base64')}`
-
-         const uploadResult = await cloudinary.uploader.upload(base64Image, {resource_type: 'image'});
+         // Instead of calling the Gemini API, use the fixed local output image for this set
+         const imageOutput = path.join(ASSETS_DIR, OUTPUT_SETS[variant].image);
+         const uploadResult = await cloudinary.uploader.upload(imageOutput, {resource_type: 'image'});
 
          await prisma.project.update({
             where: {id: project.id},
@@ -213,57 +158,14 @@ export const createVideo = async (req:Request, res: Response) => {
             data: {isGenerating: true}
         })
 
-        const prompt = `make the person showcase the product which is ${project.productName} ${project.productDescription && `and Product Description: ${project.productDescription}`}`
-
-        const model = 'veo-3.1-generate-preview'
-
         if(!project.generatedImage){
             throw new Error('Generated image not found');
         }
 
-        const image = await axios.get(project.generatedImage, {responseType: 'arraybuffer',})
-
-        const imageBytes: any = Buffer.from(image.data)
-
-        let operation: any = await ai.models.generateVideos({
-            model,
-            prompt,
-            image: {
-                imageBytes: imageBytes.toString('base64'),
-                mimeType: 'image/png',
-            },
-            config: {
-                aspectRatio: project?.aspectRatio || '9:16',
-                numberOfVideos: 1,
-                resolution: '720p',
-            }
-        })
-
-        while (!operation.done){
-            console.log('Waiting for video generation to complete...');
-            await new Promise((resolve)=>setTimeout(resolve, 10000));
-            operation = await ai.operations.getVideosOperation({
-                operation: operation,
-            })
-        }
-
-        const filename = `${userId}-${Date.now()}.mp4`;
-        const filePath = path.join('videos', filename)
-
-        // Create the images directory if it doesn't exist
-        fs.mkdirSync('videos', {recursive: true})
-
-        if(!operation.response.generatedVideos){
-            throw new Error(operation.response.raiMediaFilteredReasons[0])
-        }
-
-        // Download the video.
-        await ai.files.download({
-            file: operation.response.generatedVideos[0].video,
-            downloadPath: filePath,
-        })
-
-        const uploadResult = await cloudinary.uploader.upload(filePath, { resource_type: 'video' });
+        // Instead of calling the Veo API, use the fixed local output video for this project's set
+        const variant = OUTPUT_SETS[project.variant] ? project.variant : DEFAULT_VARIANT;
+        const videoOutput = path.join(ASSETS_DIR, OUTPUT_SETS[variant].video);
+        const uploadResult = await cloudinary.uploader.upload(videoOutput, { resource_type: 'video' });
 
         await prisma.project.update({
             where: {id: project.id},
@@ -272,9 +174,6 @@ export const createVideo = async (req:Request, res: Response) => {
                 isGenerating: false
             }
         })
-
-        // remove video file from disk after upload
-        fs.unlinkSync(filePath);
 
         res.json({message: 'Video generation completed', videoUrl: uploadResult.secure_url})
         
