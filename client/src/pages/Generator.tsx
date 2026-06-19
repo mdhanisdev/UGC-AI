@@ -55,7 +55,9 @@ const Genetator = () => {
            headers: { Authorization: `Bearer ${token}` }
         })
 
-        toast.success(data.message)
+        if(data.limitExceeded){
+          toast('Generation limit exceeded, Displaying preview image.', { icon: '⚠️' })
+        }
         navigate('/result/' + data.projectId)
 
       } catch (error: any) {

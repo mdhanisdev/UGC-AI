@@ -22,11 +22,15 @@ const OUTPUT_SETS: Record<string, { image: string; video: string }> = {
 // Fallback set used when the uploaded model file doesn't match model1/2/3/4
 const DEFAULT_VARIANT = '3';
 
-// Detect which output set to use based on the uploaded model file name (e.g. "model2.png" -> "2")
-const detectVariant = (modelFileName: string = ''): string => {
+// Detect which output set to use based on the uploaded model file name (e.g. "model2.png" -> "2").
+// `matched` is false when the file doesn't correspond to a known set (model1/2/3/4),
+// in which case the DEFAULT_VARIANT is used as a preview fallback.
+const detectVariant = (modelFileName: string = ''): { variant: string; matched: boolean } => {
     const match = modelFileName.match(/model\s*(\d+)/i);
     const variant = match?.[1];
-    return variant && OUTPUT_SETS[variant] ? variant : DEFAULT_VARIANT;
+    return variant && OUTPUT_SETS[variant]
+        ? { variant, matched: true }
+        : { variant: DEFAULT_VARIANT, matched: false };
 };
 
 export const createProject = async (req:Request, res: Response) => {
@@ -66,7 +70,7 @@ export const createProject = async (req:Request, res: Response) => {
         )
 
          // The frontend sends [productImage, modelImage]; pick the output set from the model file name
-         const variant = detectVariant(images[1]?.originalname);
+         const { variant, matched } = detectVariant(images[1]?.originalname);
 
          const project = await prisma.project.create({
             data: {
@@ -97,8 +101,14 @@ export const createProject = async (req:Request, res: Response) => {
             }
          })
 
-         res.json({projectId: project.id})
-        
+         // When the uploaded model file isn't one of the known sets, signal that a
+         // preview image was shown instead of a fresh generation.
+         res.json({
+            projectId: project.id,
+            limitExceeded: !matched,
+            message: matched ? undefined : 'Generation limit exceeded, Displaying preview image.'
+         })
+
     } catch (error:any) {
         if(tempProjectId!){
             // update project status and error message
