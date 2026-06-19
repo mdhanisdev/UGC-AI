@@ -1,1 +1,10 @@
-./client/.env
+# Environment variables
+.env
+client/.env
+server/.env
+
+# Dependencies
+node_modules
+
+# Build output
+dist

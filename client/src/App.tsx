@@ -11,6 +11,7 @@ import Community from './pages/Community';
 import Plans from './pages/Plans';
 import Loading from './pages/Loading';
 import {Toaster} from 'react-hot-toast'
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { useEffect } from 'react';
 
 function App() {
@@ -38,6 +39,7 @@ function App() {
 			</Routes>
 
 			<Footer />
+			<SpeedInsights />
 		</>
 	);
 }

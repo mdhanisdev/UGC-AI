@@ -31,7 +31,7 @@ export default function SoftBackdrop() {
 
             {/* Grain texture */}
             <div className="absolute inset-0 opacity-[0.05] mix-blend-overlay 
-                bg-[url('/noise.png')]" 
+                bg-[url('/noise.svg')]"
             />
         </div>
     )

@@ -24,9 +24,6 @@ app.use(clerkMiddleware())
 app.get('/', (req: Request, res: Response) => {
     res.send('Server is Live!');
 });
-app.get("/debug-sentry", function mainHandler(req, res) {
-  throw new Error("My first Sentry error!");
-});
 app.use('/api/user', userRouter)
 app.use('/api/project', projectRouter)
 

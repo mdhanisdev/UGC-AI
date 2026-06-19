@@ -19,7 +19,8 @@ const OUTPUT_SETS: Record<string, { image: string; video: string }> = {
     '4': { image: 'output4.png', video: 'output4.mp4' },
 };
 
-const DEFAULT_VARIANT = '1';
+// Fallback set used when the uploaded model file doesn't match model1/2/3/4
+const DEFAULT_VARIANT = '3';
 
 // Detect which output set to use based on the uploaded model file name (e.g. "model2.png" -> "2")
 const detectVariant = (modelFileName: string = ''): string => {
